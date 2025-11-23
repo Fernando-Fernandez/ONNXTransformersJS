@@ -96,10 +96,12 @@ class TextGenerationPipeline {
       console.log('Tokenizer loaded successfully');
       
       // Load model if not already loaded
-      // We explicitly specify 'webgpu' device and 'q4f16' dtype for performance
+      // Choose device/dtype dynamically: allow forcing CPU or special-case NanoChat
+      const preferredDevice = this._force_cpu ? 'cpu' : 'webgpu';
+      const preferredDtype = (this._force_cpu || (this.model_id && this.model_id.includes && this.model_id.includes('NanoChat'))) ? 'float32' : 'q4f16';
       this.model ??= await AutoModelForCausalLM.from_pretrained(this.model_id, {
-        dtype: "q4f16",
-        device: "webgpu", 
+        dtype: preferredDtype,
+        device: preferredDevice,
         progress_callback,
       });
       console.log('Model loaded successfully');
@@ -117,7 +119,27 @@ class TextGenerationPipeline {
       } else if (errorMessage.includes('memory') || errorMessage.includes('OOM')) {
         errorMessage = 'Insufficient GPU memory. Try closing other tabs or use a device with more VRAM.';
       }
-      
+
+      // Attempt a CPU fallback for WebGPU/device-related failures (try once)
+      try {
+        if (!this._cpuFallbackTried && (errorMessage.includes('WebGPU') || errorMessage.includes('device') || errorMessage.includes('adapter') || errorMessage.includes('3944596720'))) {
+          this._cpuFallbackTried = true;
+          self.postMessage({ status: 'loading', data: 'WebGPU failed; falling back to CPU for ' + this.model_id + '...' });
+          // Try loading model on CPU (safer but slower)
+          this.model ??= await AutoModelForCausalLM.from_pretrained(this.model_id, {
+            dtype: "float32",
+            device: "cpu",
+            progress_callback,
+          });
+          console.log('Model loaded successfully on CPU');
+          return [this.tokenizer, this.model];
+        }
+      } catch (cpuError) {
+        console.error('CPU fallback failed:', cpuError);
+        // append CPU fallback error to original message for debugging
+        errorMessage += ' | CPU fallback failed: ' + (cpuError?.message || cpuError?.toString());
+      }
+
       self.postMessage({
         status: "error",
         data: \`Model loading failed: \${errorMessage}\`
@@ -153,8 +175,27 @@ async function generate(messages) {
 
   // Callback for tracking tokens per second (TPS)
   const token_callback_function = (tokens) => {
+    // tokens may be BigInt values or numeric ids; normalize for decoding
     console.log('Token callback:', tokens);
     startTime ??= performance.now();
+    // Try to decode the token(s) for debugging so we can see what is being emitted
+    try {
+      const tokenIds = Array.isArray(tokens) ? tokens.map(t => (typeof t === 'bigint' ? Number(t) : t)) : [tokens];
+      let decoded = null;
+      if (tokenizer && typeof tokenizer.decode === 'function') {
+        decoded = tokenizer.decode(tokenIds, { skip_special_tokens: false });
+      } else if (tokenizer && typeof tokenizer.batch_decode === 'function') {
+        decoded = tokenizer.batch_decode([tokenIds], { skip_special_tokens: false })[0];
+      }
+      if (decoded !== null) {
+        console.log('Decoded token text:', decoded);
+        // Send lightweight token-level debug to main thread so UI can show it if needed
+        self.postMessage({ status: 'token_debug', tokens: tokenIds, text: decoded });
+      }
+    } catch (e) {
+      console.warn('Token decode failed:', e);
+    }
+
     if (numTokens++ > 0) {
       tps = (numTokens / (performance.now() - startTime)) * 1000;
       console.log('Current TPS:', tps);
@@ -200,9 +241,11 @@ async function generate(messages) {
   };
 
   // Streamer handles decoding tokens into text incrementally
+  // Disable skipping special tokens for debugging NanoChat output; we post token-level
+  // debug messages to help identify if the model emits only special tokens.
   const streamer = new TextStreamer(tokenizer, {
     skip_prompt: true,
-    skip_special_tokens: true,
+    skip_special_tokens: false,
     callback_function,
     token_callback_function,
   });
@@ -321,6 +364,12 @@ self.addEventListener("message", async (e) => {
       TextGenerationPipeline.model = null;
       self.postMessage({ status: 'model_changed', data });
       break;
+    case "set_force_cpu":
+      // Allow the main thread to request CPU mode for model loading
+      console.log('Setting force_cpu to', data);
+      TextGenerationPipeline._force_cpu = !!data;
+      self.postMessage({ status: 'force_cpu_set', data: !!data });
+      break;
     case "load":
       load();
       break;
@@ -391,6 +440,7 @@ async function initApp() {
       const MODEL_FRIENDLY = {
         'onnx-community/Qwen3-0.6B-ONNX': 'Qwen3‑0.6B',
         'onnx-community/Llama-3.2-1B-Instruct-ONNX': 'Llama‑3.2‑1B‑Instruct',
+        'onnx-community/NanoChat-d32-ONNX': 'NanoChat‑d32',
       };
 
       function friendlyName(id) {
@@ -479,6 +529,7 @@ async function initApp() {
 
     // Model selection control
     const modelSelect = document.getElementById('model-select');
+    const forceCpuCheckbox = document.getElementById('force-cpu');
 
     function setModelAndLoad(modelId) {
       // Clear progress UI and notify worker to switch model
@@ -486,6 +537,10 @@ async function initApp() {
       loadingFile.textContent = `Selected model: ${modelId}`;
       progressFill.style.width = `0%`;
       progressText.textContent = `0%`;
+
+      // Inform worker if user requested CPU fallback before model change
+      const forceCpu = forceCpuCheckbox ? forceCpuCheckbox.checked : false;
+      worker.postMessage({ type: 'set_force_cpu', data: forceCpu });
 
       worker.postMessage({ type: 'set_model', data: modelId });
       // Ask worker to load the newly selected model
@@ -496,6 +551,21 @@ async function initApp() {
       const val = e.target.value;
       setModelAndLoad(val);
     });
+
+    if (forceCpuCheckbox) {
+      forceCpuCheckbox.addEventListener('change', (e) => {
+        const checked = e.target.checked;
+        // Notify worker of the change. If a model is already selected, reload it to apply.
+        worker.postMessage({ type: 'set_force_cpu', data: checked });
+        // If a model is currently loaded, trigger a reload to apply the device change
+        const currentModel = document.getElementById('model-select').value;
+        if (currentModel) {
+          // Clear cached pipeline so new device is used
+          worker.postMessage({ type: 'set_model', data: currentModel });
+          worker.postMessage({ type: 'load' });
+        }
+      });
+    }
 
     // Initialize Model with currently selected model
     setModelAndLoad(document.getElementById('model-select').value);
