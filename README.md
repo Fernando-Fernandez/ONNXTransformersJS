@@ -4,38 +4,70 @@ This project demonstrates running ONNX language models directly in the browser u
 
 ONNX is the [Open Neural Network Exchange format](https://onnx.ai/) that enables interoperability between AI frameworks (PyTorch, TensorFlow, Caffe2) and across platforms. This demo uses the [ONNX Runtime Web](https://onnxruntime.ai/docs/tutorials/web/) backend via the [Transformers.js](https://github.com/huggingface/transformers.js) library.
 
-**What's New:**
+# In‑Browser ONNX Model Demo (Qwen / Llama + more)
 
-- **Model Selection UI:** A dropdown lets you choose which ONNX model to load (`onnx-community/Qwen3-0.6B-ONNX` or `onnx-community/Llama-3.2-1B-Instruct-ONNX`).
-- **Persistent Model Label:** The currently loaded model is shown under the selector (`Loaded model:`) with a friendly name.
-- **Dynamic Worker Loading:** The main thread sends the selected model id to the worker, which clears cached instances and loads the requested model.
+This project demonstrates running ONNX language models directly in the browser using WebGPU and a bundled Transformers IIFE. It's a lightweight, local demo that downloads models at runtime and runs inference inside a Web Worker.
 
-**Key Points:**
+The demo uses the [ONNX Runtime Web](https://onnxruntime.ai/docs/tutorials/web/) backend via the [Transformers.js](https://github.com/huggingface/transformers.js) library.
 
-- **Vanilla HTML/JS/CSS**: Open `index.html` (file:// or served) — no build step required.
-- **Worker-based inference**: `public/transformers.iife.js` is inlined into a Blob worker so the demo works under `file://`.
-- **ONNX + WebGPU**: Models run using the ONNX runtime via the Transformers JS bindings, targeting `webgpu` and a quantized dtype for performance.
-- **Thought panel & streaming**: The worker streams generated text and separates `<think>...</think>` segments into the thought panel.
+What's in this repo
 
-**Files changed (recent):**
+- A small frontend (`index.html`, `styles.css`, `app.js`) that talks to a worker for inference.
+- A blob-based inlined worker (created from `app.js`) and a standalone worker (`public/worker.js`) that both use the bundled Transformers IIFE (`public/transformers_lib.js`).
+- A centralized `MODEL_REGISTRY` at `public/models.js` that contains model ids, friendly names, default dtypes, and whether the model exposes internal "thoughts".
 
-- `index.html` — added the model selector and a persistent `Loaded model` label.
-- `app.js` — wired the selector to send `{ type: 'set_model', data: '<model-id>' }` to the worker, added friendly-name mapping, and updated UI handlers. The worker now includes the selected model id in readiness messages.
+What changed recently
 
-**How to run (quick):**
+- Model registry centralized: `public/models.js` is the source-of-truth for available models and metadata (`friendly`, `dtype`, `thinking`). The UI populates the model dropdown from this registry.
+- Workers receive the registry (the blob worker gets it via `postMessage` and the standalone worker can be configured to `importScripts('public/models.js')` or receive it the same way). Workers prefer the registry's dtype when loading a model.
+- Special/control tokens (ASCII `<|...|>` and fullwidth variants like `<｜...｜>`) and explicit end-of-sentence tokens such as `<｜end▁of▁sentence｜>` are now logged to the console but stripped from UI output. This avoids showing control tokens in the chat while keeping them available for debugging via console logs and `token_debug` messages.
 
-1. Open the project root and launch the demo in your browser (file protocol works):
+Quick usage
+
+1. Open the project root and serve or open `index.html` in a modern Chromium-based browser with WebGPU support. For a quick local server you can run:
 
 ```bash
-open index.html
+# from the project root
+python3 -m http.server 8000
+# then open http://localhost:8000 in your browser
 ```
 
-2. Wait for the WebGPU check to complete (the status message appears at the top).
-3. Use the `Model:` dropdown to pick a model — the UI will show `Loaded model: <name> (switching...)` while downloading, then update when ready.
-4. When ready, use the chat input to send messages and the model will stream responses into the chat and thought panel.
+2. The UI performs a WebGPU check. If WebGPU is available the model loader will proceed.
+3. Select a model from the `Model:` dropdown (populated from `public/models.js`). The UI shows loading progress and a friendly model name.
+4. When the model is ready you can send messages in the chat input. Responses stream incrementally; `<think>...</think>` segments (if produced) appear in the Thought Panel.
 
-**Troubleshooting:**
+Developer notes
 
-- **WebGPU not supported**: The demo requires a browser with WebGPU and a working adapter. If you see `WebGPU not supported` in the UI, try a Chromium-based browser with an enabled WebGPU flag or update GPU drivers.
-- **OOM / Memory errors**: Loading large models may fail if the device lacks enough GPU memory. Try a smaller model or close other GPU-intensive applications.
-- **Model load fails**: Open DevTools → Console to inspect worker error messages; the worker posts helpful status/errors to the main thread UI as well.
+- Centralized model registry: edit `public/models.js` to add/remove models. Each entry should look like:
+
+```js
+	'owner/model-name-ONNX': { friendly: 'Friendly Name', dtype: 'q4f16'|'q4'|'fp32', thinking: false }
+```
+
+- Worker behavior:
+	- The blob worker (created from `app.js`) receives the registry via `worker.postMessage({ type: 'model_registry', data: MODEL_REGISTRY })` on startup.
+	- The standalone worker (`public/worker.js`) currently accepts the `model_registry` message as well. Optionally you can have the standalone worker call `importScripts('public/models.js')` to read the registry directly instead of receiving it by postMessage.
+	- When the worker loads a model it prefers the registry-defined `dtype` for that model; fallbacks exist for models not present in the registry.
+
+- Token handling:
+	- The workers detect both ASCII special tokens (`<|...|>`) and fullwidth variants (`<｜...｜>`), as well as an explicit fullwidth end-of-sentence token pattern like `<｜end▁of▁sentence｜>`. These are logged to the console (and emitted as `token_debug` messages) but removed from the UI output so users don't see control tokens.
+
+Testing tips
+
+- Open DevTools → Console to inspect worker logs. Look for:
+	- `registry_received` (worker acknowledged the registry)
+	- `Model ready` or `Model load failed: ...` messages
+	- `Special token (...)` or `End-of-turn token (...)` logs when token-debugging
+
+- If a model fails to load due to memory or WebGPU errors, the worker falls back to a safer configuration where possible (e.g., `wasm`/`fp32`) and reports status messages to the UI.
+
+Contributing
+
+- To add a model, update `public/models.js` and include a `dtype` suitable for the model (for quantized models use `q4`/`q4f16`, for small FP models use `fp32`).
+- If you prefer the standalone worker to read the registry directly, replace the `model_registry` message handler in `public/worker.js` with a call to `importScripts('public/models.js')` and remove the `postMessage` from `app.js` that sends the registry.
+
+License / Disclaimer
+
+This is an experimental demo. Models referenced in the registry are loaded at runtime from Hugging Face (or other remotes) and may have their own licenses and terms. Use with models you have permission to load.
+
+Enjoy running ONNX models in the browser!
