@@ -59,9 +59,13 @@ class TextGenerationPipeline {
       });
       console.log('Tokenizer loaded successfully');
 
+      // Choose device/dtype dynamically: prefer an explicit _preferred_device if set,
+      // otherwise use WebGPU. Dtype is selected from _preferred_dtype or the centralized registry.
+      const preferredDevice = this._preferred_device ?? 'webgpu';
+      const preferredDtype = this._preferred_dtype || (this._model_registry && this._model_registry[this.model_id] && this._model_registry[this.model_id].dtype) || (/gemma/i.test(this.model_id) ? 'fp32' : (/nanochat/i.test(this.model_id) ? 'q4' : 'q4f16'));
       this.model ??= await AutoModelForCausalLM.from_pretrained(this.model_id, {
-        dtype: "q4f16",
-        device: "webgpu",
+        dtype: preferredDtype,
+        device: preferredDevice,
         progress_callback,
       });
       console.log('Model loaded successfully');
@@ -121,10 +125,49 @@ async function generate(messages) {
   let tps;
   let rawBuffer = "";
 
+  // Regex for special tokens of the form <|...|> (ASCII) and fullwidth variants like <｜...｜>.
+  // Also detect explicit end-of-turn and end-of-sentence tokens including fullwidth and U+2581 underscores.
+  const SPECIAL_TOKEN_RE = /<\|[^|]*\|>|<｜[^｜]*｜>/g;
+  const END_OF_TURN_RE = /<end_of_turn>|<｜end(?:_|▁)of(?:_|▁)sentence｜>/g;
+
+  function logAndStripTokens(str, ctx) {
+    if (!str) return str;
+    const matches = str.match(SPECIAL_TOKEN_RE);
+    if (matches && matches.length) {
+      matches.forEach(m => console.log('Special token (' + ctx + '):', m));
+    }
+    const endMatches = str.match(END_OF_TURN_RE);
+    if (endMatches && endMatches.length) {
+      endMatches.forEach(m => console.log('End-of-turn token (' + ctx + '):', m));
+    }
+    return str.replace(SPECIAL_TOKEN_RE, '').replace(END_OF_TURN_RE, '');
+  }
+
   const token_callback_function = (tokens) => {
-    console.log('Token callback:', tokens);
+    // tokens may be BigInt values or numeric ids; normalize for decoding
     startTime ??= performance.now();
-    if (numTokens++ > 0) {
+    try {
+      const tokenIds = Array.isArray(tokens) ? tokens.map(t => (typeof t === 'bigint' ? Number(t) : t)) : [tokens];
+      let decoded = null;
+      if (tokenizer && typeof tokenizer.decode === 'function') {
+        decoded = tokenizer.decode(tokenIds, { skip_special_tokens: false });
+      } else if (tokenizer && typeof tokenizer.batch_decode === 'function') {
+        decoded = tokenizer.batch_decode([tokenIds], { skip_special_tokens: false })[0];
+      }
+      if (decoded !== null) {
+        console.log('Decoded token text:', decoded);
+        const tokenDebugMatches = (decoded || '').match(SPECIAL_TOKEN_RE);
+        if (tokenDebugMatches) tokenDebugMatches.forEach(m => console.log('Special token (token_debug):', m));
+        const tokenDebugEndMatches = (decoded || '').match(END_OF_TURN_RE);
+        if (tokenDebugEndMatches) tokenDebugEndMatches.forEach(m => console.log('End-of-turn (token_debug):', m));
+        const tokenDebugSafe = (decoded || '').replace(SPECIAL_TOKEN_RE, '').replace(END_OF_TURN_RE, '');
+        self.postMessage({ status: 'token_debug', tokens: tokenIds, text: tokenDebugSafe });
+      }
+    } catch (e) {
+      console.warn('Token decode failed:', e);
+    }
+
+    if (numTokens++ > 0 && numTokens % 5 === 0) {
       tps = (numTokens / (performance.now() - startTime)) * 1000;
       console.log('Current TPS:', tps);
     }
@@ -154,6 +197,10 @@ async function generate(messages) {
       state = "answering";
     }
 
+    // Strip special tokens before sending to the UI, but keep a log for debugging
+    thought = logAndStripTokens(thought, 'thought');
+    answer = logAndStripTokens(answer, 'answer');
+
     self.postMessage({
       status: "update",
       output: answer,
@@ -166,7 +213,7 @@ async function generate(messages) {
 
   const streamer = new TextStreamer(tokenizer, {
     skip_prompt: true,
-    skip_special_tokens: true,
+    skip_special_tokens: false,
     callback_function,
     token_callback_function,
   });
@@ -186,7 +233,23 @@ async function generate(messages) {
 
   past_key_values_cache = past_key_values;
 
-  const decoded = tokenizer.batch_decode(sequences, { skip_special_tokens: true });
+  let decoded = tokenizer.batch_decode(sequences, { skip_special_tokens: true });
+  // decoded may be an array of strings; log and strip any special tokens
+  if (Array.isArray(decoded)) {
+    decoded = decoded.map(d => {
+      const matches = (d || '').match(SPECIAL_TOKEN_RE);
+      if (matches) matches.forEach(m => console.log('Special token (final):', m));
+      const endMatches = (d || '').match(END_OF_TURN_RE);
+      if (endMatches) endMatches.forEach(m => console.log('End-of-turn (final):', m));
+      return (d || '').replace(SPECIAL_TOKEN_RE, '').replace(END_OF_TURN_RE, '');
+    });
+  } else if (typeof decoded === 'string') {
+    const matches = decoded.match(SPECIAL_TOKEN_RE);
+    if (matches) matches.forEach(m => console.log('Special token (final):', m));
+    const endMatches = decoded.match(END_OF_TURN_RE);
+    if (endMatches) endMatches.forEach(m => console.log('End-of-turn (final):', m));
+    decoded = decoded.replace(SPECIAL_TOKEN_RE, '').replace(END_OF_TURN_RE, '');
+  }
   console.log('Decoded output:', decoded);
   self.postMessage({ status: "complete", output: decoded });
 }
@@ -282,6 +345,25 @@ self.addEventListener("message", async (e) => {
   switch (type) {
     case "check":
       check();
+      break;
+    case "set_model":
+      // Support either a plain string (modelId) or an object { model_id, dtype }
+      console.log('Setting model id to', data);
+      if (typeof data === 'string') {
+        TextGenerationPipeline.model_id = data;
+        TextGenerationPipeline._preferred_dtype = null;
+      } else if (data && typeof data === 'object') {
+        TextGenerationPipeline.model_id = data.model_id || TextGenerationPipeline.model_id;
+        TextGenerationPipeline._preferred_dtype = data.dtype || null;
+      }
+      TextGenerationPipeline.tokenizer = null;
+      TextGenerationPipeline.model = null;
+      self.postMessage({ status: 'model_changed', data });
+      break;
+    case "model_registry":
+      // Receive centralized registry from main thread
+      TextGenerationPipeline._model_registry = data;
+      self.postMessage({ status: 'registry_received' });
       break;
     case "load":
       load();

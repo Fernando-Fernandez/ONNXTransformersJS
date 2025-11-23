@@ -32,6 +32,8 @@ async function checkWebGPU() {
 // Worker Code as String (to bypass file:// security restrictions)
 // This function returns the entire worker script as a string.
 // We do this to create a Blob worker, which avoids "SecurityError" when running from file://
+// MODEL_REGISTRY is now provided by `public/models.js` and injected on global scope.
+
 const getWorkerCode = (baseUrl) => `
 // Define base URL for the library to resolve relative paths correctly
 // This is critical for file:// protocol support where relative paths fail in Blob workers
@@ -96,9 +98,10 @@ class TextGenerationPipeline {
       console.log('Tokenizer loaded successfully');
       
       // Load model if not already loaded
-      // Choose device/dtype dynamically: allow forcing CPU or special-case NanoChat
-      const preferredDevice = this._force_cpu ? 'cpu' : 'webgpu';
-      const preferredDtype = (this._force_cpu || (this.model_id && this.model_id.includes && this.model_id.includes('NanoChat'))) ? 'float32' : 'q4f16';
+      // Choose device/dtype dynamically: prefer an explicit '_preferred_device' if set,
+      // otherwise use WebGPU. Dtype is selected from '_preferred_dtype' or model heuristics.
+      const preferredDevice = this._preferred_device ?? 'webgpu';
+      const preferredDtype = this._preferred_dtype || (this._model_registry && this._model_registry[this.model_id] && this._model_registry[this.model_id].dtype) || (/gemma/i.test(this.model_id) ? 'fp32' : (/nanochat/i.test(this.model_id) ? 'q4' : 'q4f16'));
       this.model ??= await AutoModelForCausalLM.from_pretrained(this.model_id, {
         dtype: preferredDtype,
         device: preferredDevice,
@@ -109,7 +112,7 @@ class TextGenerationPipeline {
       return [this.tokenizer, this.model];
     } catch (error) {
       console.error('Failed to load model:', error);
-      let errorMessage = error?.message || error?.toString() || \`Unknown error (\${typeof error}): \${JSON.stringify(error)}\`;
+      let errorMessage = error?.message || error?.toString() || ('Unknown error (' + typeof error + '): ' + JSON.stringify(error));
       
       // Handle specific ONNX/WebGPU errors with user-friendly messages
       if (errorMessage.includes('3944596720') || errorMessage.includes('WebGPU')) {
@@ -127,8 +130,8 @@ class TextGenerationPipeline {
           self.postMessage({ status: 'loading', data: 'WebGPU failed; falling back to CPU for ' + this.model_id + '...' });
           // Try loading model on CPU (safer but slower)
           this.model ??= await AutoModelForCausalLM.from_pretrained(this.model_id, {
-            dtype: "float32",
-            device: "cpu",
+            dtype: "fp32", //"float32",
+            device: "wasm", // "cpu"
             progress_callback,
           });
           console.log('Model loaded successfully on CPU');
@@ -142,7 +145,7 @@ class TextGenerationPipeline {
 
       self.postMessage({
         status: "error",
-        data: \`Model loading failed: \${errorMessage}\`
+           data: 'Model loading failed: ' + errorMessage
       });
       throw error;
     }
@@ -173,10 +176,28 @@ async function generate(messages) {
   let tps;
   let rawBuffer = "";
 
+  // Regex for special tokens of the form <|...|> (ASCII) and fullwidth variants like <｜...｜>.
+  // Also detect end-of-turn / end-of-sentence tokens including fullwidth and U+2581 underscores.
+  const SPECIAL_TOKEN_RE = /<\\|[^|]*\\|>|<｜[^｜]*｜>/g;
+  const END_OF_TURN_RE = /<end_of_turn>|<｜end(?:_|▁)of(?:_|▁)sentence｜>/g;
+
+  function logAndStripTokens(str, ctx) {
+    if (!str) return str;
+    const matches = str.match(SPECIAL_TOKEN_RE);
+    if (matches && matches.length) {
+      matches.forEach(m => console.log('Special token (' + ctx + '):', m));
+    }
+    const endMatches = str.match(END_OF_TURN_RE);
+    if (endMatches && endMatches.length) {
+      endMatches.forEach(m => console.log('End-of-turn token (' + ctx + '):', m));
+    }
+    return str.replace(SPECIAL_TOKEN_RE, '').replace(END_OF_TURN_RE, '');
+  }
+
   // Callback for tracking tokens per second (TPS)
   const token_callback_function = (tokens) => {
     // tokens may be BigInt values or numeric ids; normalize for decoding
-    console.log('Token callback:', tokens);
+    //console.log('Token callback:', tokens);
     startTime ??= performance.now();
     // Try to decode the token(s) for debugging so we can see what is being emitted
     try {
@@ -189,14 +210,21 @@ async function generate(messages) {
       }
       if (decoded !== null) {
         console.log('Decoded token text:', decoded);
+        // Remove special tokens and end-of-turn tokens from token-level debug before sending to UI,
+        // but log any occurrences to the console.
+        const tokenDebugMatches = (decoded || '').match(SPECIAL_TOKEN_RE);
+        if (tokenDebugMatches) tokenDebugMatches.forEach(m => console.log('Special token (token_debug):', m));
+        const tokenDebugEndMatches = (decoded || '').match(END_OF_TURN_RE);
+        if (tokenDebugEndMatches) tokenDebugEndMatches.forEach(m => console.log('End-of-turn (token_debug):', m));
+        const tokenDebugSafe = (decoded || '').replace(SPECIAL_TOKEN_RE, '').replace(END_OF_TURN_RE, '');
         // Send lightweight token-level debug to main thread so UI can show it if needed
-        self.postMessage({ status: 'token_debug', tokens: tokenIds, text: decoded });
+        self.postMessage({ status: 'token_debug', tokens: tokenIds, text: tokenDebugSafe });
       }
     } catch (e) {
       console.warn('Token decode failed:', e);
     }
 
-    if (numTokens++ > 0) {
+    if (numTokens++ > 0 && numTokens % 5 === 0) {
       tps = (numTokens / (performance.now() - startTime)) * 1000;
       console.log('Current TPS:', tps);
     }
@@ -204,7 +232,7 @@ async function generate(messages) {
 
   // Callback for handling generated text output
   const callback_function = (output) => {
-    console.log('Output callback:', output);
+    //console.log('Output callback:', output);
     rawBuffer += output;
 
     // Logic to separate "thinking" content (<think>...</think>) from the final answer
@@ -228,6 +256,10 @@ async function generate(messages) {
     } else {
       state = "answering";
     }
+
+    // Strip special tokens before sending to the UI, but keep a log for debugging
+    thought = logAndStripTokens(thought, 'thought');
+    answer = logAndStripTokens(answer, 'answer');
 
     // Send update to main thread
     self.postMessage({
@@ -267,7 +299,19 @@ async function generate(messages) {
   // Cache KV pairs for next turn
   past_key_values_cache = past_key_values;
 
-  const decoded = tokenizer.batch_decode(sequences, { skip_special_tokens: true });
+  let decoded = tokenizer.batch_decode(sequences, { skip_special_tokens: true });
+  // decoded may be an array of strings; log and strip any special tokens
+  if (Array.isArray(decoded)) {
+    decoded = decoded.map(d => {
+      const matches = (d || '').match(SPECIAL_TOKEN_RE);
+      if (matches) matches.forEach(m => console.log('Special token (final):', m));
+      return (d || '').replace(SPECIAL_TOKEN_RE, '');
+    });
+  } else if (typeof decoded === 'string') {
+    const matches = decoded.match(SPECIAL_TOKEN_RE);
+    if (matches) matches.forEach(m => console.log('Special token (final):', m));
+    decoded = decoded.replace(SPECIAL_TOKEN_RE, '');
+  }
   console.log('Decoded output:', decoded);
   self.postMessage({ status: "complete", output: decoded });
 }
@@ -292,7 +336,7 @@ function handleProgress(event) {
   } else if (event.loaded < event.total) {
     // Download in progress
     const percent = Math.round((event.loaded / event.total) * 100);
-    console.log(\`Loading progress: \${percent}%\`);
+       console.log('Loading progress: ' + percent + '%');
     self.postMessage({
       status: "progress", 
       file: fileLabel,
@@ -325,7 +369,7 @@ async function load() {
     
     // If we get here, WebGPU is supported, so proceed with loading the model
     const modelId = TextGenerationPipeline?.model_id || "onnx-community/Qwen3-0.6B-ONNX";
-    self.postMessage({ status: "loading", data: \`Loading \${modelId}...\` });
+       self.postMessage({ status: "loading", data: 'Loading ' + modelId + '...' });
 
     const [tokenizer, model] = await TextGenerationPipeline.getInstance(handleProgress);
     console.log('Model loaded successfully');
@@ -339,10 +383,10 @@ async function load() {
     self.postMessage({ status: "ready", model: modelId });
   } catch (error) {
     console.error('Model load failed:', error);
-    const errorMessage = error?.message || error?.toString() || \`Unknown error (\${typeof error}): \${JSON.stringify(error)}\`;
+      const errorMessage = error?.message || error?.toString() || ('Unknown error (' + typeof error + '): ' + JSON.stringify(error));
     self.postMessage({
       status: "error",
-      data: \`Model load failed: \${errorMessage}\`
+         data: 'Model load failed: ' + errorMessage
     });
   }
 }
@@ -356,20 +400,27 @@ self.addEventListener("message", async (e) => {
     case "check":
       check();
       break;
+    case "model_registry":
+      // Receive centralized registry from main thread
+      TextGenerationPipeline._model_registry = data;
+      self.postMessage({ status: 'registry_received' });
+      break;
     case "set_model":
-      // Change the model id used by the pipeline and clear any cached instances
+      // Change the model id used by the pipeline and clear any cached instances.
+      // Support either a plain string (modelId) or an object { model_id, dtype }.
       console.log('Setting model id to', data);
-      TextGenerationPipeline.model_id = data;
+      if (typeof data === 'string') {
+        TextGenerationPipeline.model_id = data;
+        TextGenerationPipeline._preferred_dtype = null;
+      } else if (data && typeof data === 'object') {
+        TextGenerationPipeline.model_id = data.model_id || TextGenerationPipeline.model_id;
+        TextGenerationPipeline._preferred_dtype = data.dtype || null;
+      }
       TextGenerationPipeline.tokenizer = null;
       TextGenerationPipeline.model = null;
       self.postMessage({ status: 'model_changed', data });
       break;
-    case "set_force_cpu":
-      // Allow the main thread to request CPU mode for model loading
-      console.log('Setting force_cpu to', data);
-      TextGenerationPipeline._force_cpu = !!data;
-      self.postMessage({ status: 'force_cpu_set', data: !!data });
-      break;
+    
     case "load":
       load();
       break;
@@ -407,6 +458,8 @@ async function initApp() {
     const blob = new Blob([workerCode], { type: 'application/javascript' });
     const workerUrl = URL.createObjectURL(blob);
     const worker = new Worker(workerUrl);
+    // Send centralized model registry to the worker so it can use friendly names and dtypes.
+    worker.postMessage({ type: 'model_registry', data: MODEL_REGISTRY });
 
     // UI Elements
     const modelStatus = document.getElementById('model-status');
@@ -428,8 +481,16 @@ async function initApp() {
     const toggleThoughtBtn = document.getElementById('toggle-thought-btn');
     const closeThoughtBtn = document.getElementById('close-thought-btn');
 
+    // Helper: which models support exposing internal "thoughts".
+    // Which models support exposing internal "thoughts". Prefer registry flag.
+    function isThinkingModel(modelId) {
+      return (MODEL_REGISTRY[modelId] && MODEL_REGISTRY[modelId].thinking) || /qwen/i.test(modelId);
+    }
+
     let isGenerating = false;
     let currentAssistantMessageDiv = null;
+
+    
 
     // Worker Message Handling
     worker.addEventListener('message', (e) => {
@@ -437,14 +498,8 @@ async function initApp() {
 
       const currentModelNameEl = document.getElementById('current-model-name');
 
-      const MODEL_FRIENDLY = {
-        'onnx-community/Qwen3-0.6B-ONNX': 'Qwen3‑0.6B',
-        'onnx-community/Llama-3.2-1B-Instruct-ONNX': 'Llama‑3.2‑1B‑Instruct',
-        'onnx-community/NanoChat-d32-ONNX': 'NanoChat‑d32',
-      };
-
       function friendlyName(id) {
-        return MODEL_FRIENDLY[id] || id;
+        return (MODEL_REGISTRY[id] && MODEL_REGISTRY[id].friendly) || id;
       }
 
         switch (status) {
@@ -529,22 +584,51 @@ async function initApp() {
 
     // Model selection control
     const modelSelect = document.getElementById('model-select');
-    const forceCpuCheckbox = document.getElementById('force-cpu');
+
+    // Populate model dropdown from centralized registry if available
+    try {
+      const registry = window.MODEL_REGISTRY || self.MODEL_REGISTRY || (typeof MODEL_REGISTRY !== 'undefined' ? MODEL_REGISTRY : null);
+      if (registry) {
+        // Clear existing options
+        modelSelect.innerHTML = '';
+        Object.entries(registry).forEach(([id, meta]) => {
+          const opt = document.createElement('option');
+          opt.value = id;
+          opt.textContent = meta.friendly || id;
+          modelSelect.appendChild(opt);
+        });
+      }
+    } catch (e) {
+      console.warn('Model registry not available to populate dropdown:', e);
+    }
 
     function setModelAndLoad(modelId) {
       // Clear progress UI and notify worker to switch model
       modelStatus.classList.remove('hidden');
-      loadingFile.textContent = `Selected model: ${modelId}`;
+      loadingFile.textContent = 'Selected model: ' + (MODEL_REGISTRY[modelId]?.friendly || modelId);
       progressFill.style.width = `0%`;
       progressText.textContent = `0%`;
 
-      // Inform worker if user requested CPU fallback before model change
-      const forceCpu = forceCpuCheckbox ? forceCpuCheckbox.checked : false;
-      worker.postMessage({ type: 'set_force_cpu', data: forceCpu });
+      // Previously could request CPU fallback; that option was removed.
 
-      worker.postMessage({ type: 'set_model', data: modelId });
+      // Determine preferred dtype for the selected model and send it explicitly.
+      // NanoChat models use a 4-bit q4 dtype; others default to q4f16.
+      const preferredDtype = (MODEL_REGISTRY[modelId] && MODEL_REGISTRY[modelId].dtype) || (/gemma/i.test(modelId) ? 'fp32' : (/nanochat/i.test(modelId) ? 'q4' : 'q4f16'));
+      worker.postMessage({ type: 'set_model', data: { model_id: modelId, dtype: preferredDtype } });
       // Ask worker to load the newly selected model
       worker.postMessage({ type: 'load' });
+
+      // Show/hide the thoughts UI depending on whether the model supports it
+      if (isThinkingModel(modelId)) {
+        toggleThoughtBtn.classList.remove('hidden');
+      } else {
+        // hide the toggle and ensure the thought panel is closed
+        toggleThoughtBtn.classList.add('hidden');
+        if (!thoughtPanel.classList.contains('hidden')) {
+          thoughtPanel.classList.add('hidden');
+          toggleThoughtBtn.textContent = 'Show Thoughts';
+        }
+      }
     }
 
     modelSelect.addEventListener('change', (e) => {
@@ -552,20 +636,7 @@ async function initApp() {
       setModelAndLoad(val);
     });
 
-    if (forceCpuCheckbox) {
-      forceCpuCheckbox.addEventListener('change', (e) => {
-        const checked = e.target.checked;
-        // Notify worker of the change. If a model is already selected, reload it to apply.
-        worker.postMessage({ type: 'set_force_cpu', data: checked });
-        // If a model is currently loaded, trigger a reload to apply the device change
-        const currentModel = document.getElementById('model-select').value;
-        if (currentModel) {
-          // Clear cached pipeline so new device is used
-          worker.postMessage({ type: 'set_model', data: currentModel });
-          worker.postMessage({ type: 'load' });
-        }
-      });
-    }
+    // Force CPU option removed; no handler required.
 
     // Initialize Model with currently selected model
     setModelAndLoad(document.getElementById('model-select').value);

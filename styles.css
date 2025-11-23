@@ -16,15 +16,10 @@
   --theme-thought-background: var(--color-gray-10);
 
   /* Typography */
-  --font-family-mono: 'GeistMono-Regular', Consolas, monaco, monospace;
+  /* Use system font stack only; remove any custom/external fonts */
+  --font-family-mono: Arial, sans-serif;
   --font-size: 16px;
   --line-height: 1.5;
-}
-
-/* Custom Font Definition */
-@font-face {
-  font-family: 'GeistMono-Regular';
-  src: url('https://intdev-global.s3.us-west-2.amazonaws.com/public/internet-dev/996b00fb-4b7a-403d-8da2-ce2225450681.woff2') format('woff2');
 }
 
 /* Reset & Base Styles */
@@ -60,24 +55,42 @@ h3 {
   border-radius: 4px;
 }
 
+/* Top row: model selector and status panel side-by-side */
+.top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+/* Narrower status container so it fits beside the selector */
+#status-container {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 220px;
+}
+
 /* Main Layout Container */
 /* Uses Flexbox to create a side-by-side layout for Thought Panel and Chat */
 .main-container {
+  width: 100%;
   display: flex;
+  flex-direction: column;
   gap: 1rem;
-  height: 60vh;
+  clear: both;
 }
 
 /* Thought Panel Styles */
 .thought-panel {
-  flex: 1;
+  width: 100%;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--theme-border);
   border-radius: 4px;
   background: var(--theme-thought-background);
   overflow: hidden;
-  min-width: 300px;
+  min-height: 150px;
 }
 
 .panel-header {
@@ -107,10 +120,9 @@ h3 {
 
 /* Chat Interface Styles */
 #chat-interface {
-  flex: 1;
+  width: 100%;
   display: flex;
   flex-direction: column;
-  min-width: 300px;
 }
 
 .chat-container {
@@ -228,6 +240,12 @@ button:disabled {
   .main-container {
     flex-direction: column;
     height: auto;
+  }
+
+  /* Stack top-row vertically on small screens */
+  .top-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .chat-container,
