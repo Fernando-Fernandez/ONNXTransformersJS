@@ -1,0 +1,237 @@
+/* CSS Variables for Theme Configuration */
+:root {
+  /* Color Palette */
+  --color-black-100: rgba(0, 0, 0, 1);
+  --color-white: rgba(255, 255, 255, 1);
+  --color-gray-10: rgba(244, 244, 244, 1);
+  --color-gray-20: rgba(224, 224, 224, 1);
+  --color-gray-80: rgba(57, 57, 57, 1);
+
+  /* Semantic Theme Variables */
+  --theme-background: var(--color-white);
+  --theme-text: var(--color-black-100);
+  --theme-border: var(--color-gray-20);
+  --theme-button-background: var(--color-gray-20);
+  --theme-button-text: var(--color-black-100);
+  --theme-thought-background: var(--color-gray-10);
+
+  /* Typography */
+  --font-family-mono: 'GeistMono-Regular', Consolas, monaco, monospace;
+  --font-size: 16px;
+  --line-height: 1.5;
+}
+
+/* Custom Font Definition */
+@font-face {
+  font-family: 'GeistMono-Regular';
+  src: url('https://intdev-global.s3.us-west-2.amazonaws.com/public/internet-dev/996b00fb-4b7a-403d-8da2-ce2225450681.woff2') format('woff2');
+}
+
+/* Reset & Base Styles */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--theme-background);
+  color: var(--theme-text);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size);
+  line-height: var(--line-height);
+  padding: 2rem;
+  max-width: 1200px;
+  /* Increased max-width to accommodate split view */
+  margin: 0 auto;
+}
+
+h1,
+h2,
+h3 {
+  margin-bottom: 1rem;
+}
+
+/* Utility Class for Cards/Containers */
+.card {
+  border: 1px solid var(--theme-border);
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border-radius: 4px;
+}
+
+/* Main Layout Container */
+/* Uses Flexbox to create a side-by-side layout for Thought Panel and Chat */
+.main-container {
+  display: flex;
+  gap: 1rem;
+  height: 60vh;
+}
+
+/* Thought Panel Styles */
+.thought-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--theme-border);
+  border-radius: 4px;
+  background: var(--theme-thought-background);
+  overflow: hidden;
+  min-width: 300px;
+}
+
+.panel-header {
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--theme-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--theme-background);
+}
+
+.panel-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.thought-content {
+  flex: 1;
+  padding: 1rem;
+  overflow-y: auto;
+  font-family: var(--font-family-mono);
+  font-size: 0.9em;
+  white-space: pre-wrap;
+  /* Preserves whitespace formatting from the model */
+  color: var(--color-gray-80);
+}
+
+/* Chat Interface Styles */
+#chat-interface {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 300px;
+}
+
+.chat-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  border: 1px solid var(--theme-border);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--theme-background);
+}
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* Message Bubbles */
+.message {
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  max-width: 80%;
+}
+
+.message.user {
+  align-self: flex-end;
+  background: var(--theme-button-background);
+}
+
+.message.assistant {
+  align-self: flex-start;
+  border: 1px solid var(--theme-border);
+}
+
+/* Input Area Styles */
+.input-area {
+  display: flex;
+  padding: 1rem;
+  border-top: 1px solid var(--theme-border);
+  gap: 0.5rem;
+}
+
+input[type="text"] {
+  flex: 1;
+  padding: 0.5rem;
+  font-family: inherit;
+  border: 1px solid var(--theme-border);
+  border-radius: 4px;
+}
+
+/* Button Styles */
+button {
+  padding: 0.5rem 1rem;
+  background: var(--theme-button-background);
+  color: var(--theme-button-text);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+button:hover {
+  opacity: 0.8;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Icon Button (e.g., Close 'x') */
+.icon-btn {
+  background: transparent;
+  padding: 0.2rem 0.5rem;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+/* Utility Class to Hide Elements */
+.hidden {
+  display: none !important;
+}
+
+/* Progress Bar Styles */
+.progress-bar {
+  width: 100%;
+  height: 4px;
+  background: var(--theme-border);
+  margin-top: 0.5rem;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--theme-text);
+  width: 0%;
+  transition: width 0.2s;
+}
+
+/* Status Bar (Bottom Controls) */
+.status-bar {
+  margin-top: 0.5rem;
+  display: flex;
+  justify-content: space-between;
+}
+
+/* Responsive Design */
+/* Stacks panels vertically on smaller screens */
+@media (max-width: 768px) {
+  .main-container {
+    flex-direction: column;
+    height: auto;
+  }
+
+  .chat-container,
+  .thought-panel {
+    height: 50vh;
+  }
+}
