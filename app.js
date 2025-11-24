@@ -645,7 +645,11 @@ async function initApp() {
     function appendMessage(role, content) {
         const div = document.createElement('div');
         div.className = `message ${role}`;
+      if (role === 'assistant') {
+        div.innerHTML = renderFormatted(content);
+      } else {
         div.textContent = content;
+      }
         messagesContainer.appendChild(div);
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
 
@@ -656,9 +660,46 @@ async function initApp() {
 
     function updateCurrentAssistantMessage(content) {
         if (currentAssistantMessageDiv) {
-            currentAssistantMessageDiv.textContent = content;
+            currentAssistantMessageDiv.innerHTML = renderFormatted(content);
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
+    }
+
+    // Simple, safe formatter for minimal markdown-like rendering
+    // - Escapes HTML
+    // - Converts **bold** to <strong>bold</strong>
+    // - Converts lines starting with '- ' into separate list-item blocks
+    function escapeHtml(unsafe) {
+      return unsafe
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function renderFormatted(text) {
+      if (!text) return '';
+      // Ensure it's a string
+      let s = String(text);
+      // Escape HTML first
+      s = escapeHtml(s);
+      // Convert **bold** (non-greedy)
+      s = s.replace(/\*\*([\s\S]*?)\*\*/g, '<strong>$1</strong>');
+      // Convert lines that start with '- ' into block list items
+      // We'll split lines and wrap lines starting with '- '
+      const lines = s.split(/\r?\n/);
+      for (let i = 0; i < lines.length; i++) {
+        const m = lines[i].match(/^\s*-\s+(.*)$/);
+        if (m) {
+          lines[i] = '<div class="list-item">' + m[1] + '</div>';
+        } else {
+          // preserve line breaks
+          lines[i] = lines[i];
+        }
+      }
+      // Join with <br> to preserve newlines
+      return lines.join('<br>');
     }
 
     function updateButtons() {
@@ -701,8 +742,27 @@ async function initApp() {
     // Event Listeners
     sendBtn.addEventListener('click', sendMessage);
 
-    messageInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') sendMessage();
+    // Support Option+Enter (Alt+Enter) to insert a newline, and Enter to send.
+    messageInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        // On macOS Option is Alt; allow Option/Alt+Enter to insert newline
+        if (e.altKey || e.metaKey && e.altKey) {
+          // insert newline at caret position
+          const start = messageInput.selectionStart;
+          const end = messageInput.selectionEnd;
+          const value = messageInput.value;
+          messageInput.value = value.slice(0, start) + '\n' + value.slice(end);
+          // move caret after the newline
+          const pos = start + 1;
+          messageInput.selectionStart = messageInput.selectionEnd = pos;
+          // prevent default to avoid any unintended behavior
+          e.preventDefault();
+        } else if (!e.shiftKey && !e.ctrlKey && !e.altKey) {
+          // plain Enter -> send message
+          e.preventDefault();
+          sendMessage();
+        }
+      }
     });
 
     stopBtn.addEventListener('click', () => {

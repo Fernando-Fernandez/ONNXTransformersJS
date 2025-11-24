@@ -161,20 +161,37 @@ h3 {
   border: 1px solid var(--theme-border);
 }
 
+/* Styling for converted list items inside assistant messages */
+.message.assistant .list-item {
+  display: block;
+  margin: 0.2rem 0;
+  padding-left: 0.5rem;
+}
+
 /* Input Area Styles */
 .input-area {
   display: flex;
   padding: 1rem;
   border-top: 1px solid var(--theme-border);
   gap: 0.5rem;
+  align-items: flex-start;
+}
+.input-area-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
-input[type="text"] {
-  flex: 1;
+/* Make the message textarea expand to fill available width beside the buttons */
+#message-input {
+  flex: 1 1 auto;
   padding: 0.5rem;
   font-family: inherit;
   border: 1px solid var(--theme-border);
   border-radius: 4px;
+  min-height: calc(1.2rem * 4); /* approximate 4 rows */
+  line-height: 1.2rem;
+  resize: vertical;
 }
 
 /* Button Styles */

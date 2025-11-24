@@ -17,9 +17,9 @@
             <select id="model-select">
                 <!-- options populated dynamically from MODEL_REGISTRY -->
             </select>
-            <!-- Force CPU option removed -->
-            <div id="current-model" style="margin-top:0.5rem;font-size:0.95rem;color:#333;">Loaded model: <span id="current-model-name">None</span></div>
         </div>
+
+        <div id="current-model" style="margin-top:0.5rem;font-size:0.95rem;color:#333;">Loaded model: <span id="current-model-name">None</span></div>
 
         <!-- Status Container: Displays browser compatibility, model loading progress, and performance metrics -->
         <div id="status-container" class="card" style="min-width:260px;">
@@ -62,9 +62,11 @@
 
                 <!-- Input Area: Text input and control buttons -->
                 <div class="input-area">
-                    <input type="text" id="message-input" placeholder="Type a message..." autocomplete="off">
-                    <button id="send-btn">Send</button>
-                    <button id="stop-btn" disabled>Stop</button>
+                    <textarea id="message-input" placeholder="Type a message (Option+Return for newline)..." autocomplete="off" rows="4"></textarea>
+                    <div class="input-area-buttons">
+                        <button id="send-btn">Send</button>
+                        <button id="stop-btn" disabled>Stop</button>
+                    </div>
                 </div>
             </div>
 
