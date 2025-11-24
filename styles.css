@@ -251,6 +251,26 @@ button:disabled {
   justify-content: space-between;
 }
 
+.site-footer {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--theme-border);
+  font-size: 0.9rem;
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.site-footer a {
+  color: var(--color-gray-80);
+  text-decoration: none;
+}
+
+.site-footer a:hover {
+  text-decoration: underline;
+}
+
 /* Responsive Design */
 /* Stacks panels vertically on smaller screens */
 @media (max-width: 768px) {

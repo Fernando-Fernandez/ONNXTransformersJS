@@ -1,14 +1,10 @@
-# In‑Browser ONNX Model Demo (Qwen / Llama)
-
-This project demonstrates running ONNX language models directly in the browser using WebGPU and a bundled Transformers IIFE. It's a lightweight, local demo that downloads models at runtime and runs inference inside a Web Worker.
-
-ONNX is the [Open Neural Network Exchange format](https://onnx.ai/) that enables interoperability between AI frameworks (PyTorch, TensorFlow, Caffe2) and across platforms. This demo uses the [ONNX Runtime Web](https://onnxruntime.ai/docs/tutorials/web/) backend via the [Transformers.js](https://github.com/huggingface/transformers.js) library.
-
 # In‑Browser ONNX Model Demo (Qwen / Llama + more)
 
 This project demonstrates running ONNX language models directly in the browser using WebGPU and a bundled Transformers IIFE. It's a lightweight, local demo that downloads models at runtime and runs inference inside a Web Worker.
 
 The demo uses the [ONNX Runtime Web](https://onnxruntime.ai/docs/tutorials/web/) backend via the [Transformers.js](https://github.com/huggingface/transformers.js) library.
+
+ONNX is the [Open Neural Network Exchange format](https://onnx.ai/) that enables interoperability between AI frameworks (PyTorch, TensorFlow, Caffe2) and across platforms. This demo uses the [ONNX Runtime Web](https://onnxruntime.ai/docs/tutorials/web/) backend via the [Transformers.js](https://github.com/huggingface/transformers.js) library.
 
 What's in this repo
 
