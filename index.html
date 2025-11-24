@@ -19,6 +19,15 @@
             </select>
         </div>
 
+        <div class="context-loader">
+            <label for="context-url">Context URL:</label>
+            <div class="context-loader-row">
+                <input id="context-url" type="url" placeholder="https://example.com/article" autocomplete="off">
+                <button id="context-load-btn" type="button">Load Context</button>
+            </div>
+            <div id="context-status" class="context-status">No context loaded</div>
+        </div>
+
         <div id="current-model" style="margin-top:0.5rem;font-size:0.95rem;color:#333;">Loaded model: <span id="current-model-name">None</span></div>
 
         <!-- Status Container: Displays browser compatibility, model loading progress, and performance metrics -->

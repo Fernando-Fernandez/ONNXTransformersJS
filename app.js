@@ -474,6 +474,9 @@ async function initApp() {
     const resetBtn = document.getElementById('reset-btn');
     const tpsStatus = document.getElementById('tps-status');
     const tpsValue = document.getElementById('tps-value');
+    const contextUrlInput = document.getElementById('context-url');
+    const contextLoadBtn = document.getElementById('context-load-btn');
+    const contextStatus = document.getElementById('context-status');
 
     // Thought Panel Elements
     const thoughtPanel = document.getElementById('thought-panel');
@@ -489,6 +492,103 @@ async function initApp() {
 
     let isGenerating = false;
     let currentAssistantMessageDiv = null;
+    const MAX_CONTEXT_CHARS = 8000;
+    let contextCache = { url: '', text: '' };
+    let isContextLoading = false;
+    const defaultContextButtonLabel = contextLoadBtn?.textContent || 'Load Context';
+
+    function setContextStatus(message, isError = false) {
+      if (!contextStatus) return;
+      contextStatus.textContent = message;
+      if (isError) {
+        contextStatus.classList.add('error');
+      } else {
+        contextStatus.classList.remove('error');
+      }
+    }
+
+    function setContextLoadingState(loading) {
+      if (!contextLoadBtn) return;
+      isContextLoading = loading;
+      contextLoadBtn.disabled = loading;
+      contextLoadBtn.textContent = loading ? 'Loading...' : defaultContextButtonLabel;
+      if (contextUrlInput) {
+        contextUrlInput.disabled = loading;
+      }
+    }
+
+    function cleanContextText(str) {
+      return str
+        .replace(/\r/g, '\n')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n');
+    }
+
+    function normalizeContextText(html) {
+      if (!html) return '';
+      let extracted = html;
+      try {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        if (doc && doc.body) {
+          doc.querySelectorAll('script,style,noscript').forEach((el) => el.remove());
+          extracted = doc.body.textContent || '';
+        }
+      } catch (err) {
+        console.warn('Failed to parse context HTML:', err);
+      }
+      return cleanContextText(extracted);
+    }
+
+    async function loadContextFromUrl() {
+      if (!contextUrlInput) return;
+      const rawUrl = contextUrlInput.value.trim();
+      if (!rawUrl) {
+        setContextStatus('Enter a URL to load context.', true);
+        return;
+      }
+
+      let parsedUrl;
+      try {
+        parsedUrl = new URL(rawUrl);
+      } catch (err) {
+        setContextStatus('Enter a valid URL (include https://).', true);
+        return;
+      }
+
+      setContextLoadingState(true);
+      setContextStatus('Loading content...', false);
+
+      try {
+        const response = await fetch(parsedUrl.toString());
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status} while fetching context.`);
+        }
+        const html = await response.text();
+        const normalized = normalizeContextText(html);
+        if (!normalized) {
+          throw new Error('No readable text found at that URL.');
+        }
+        const truncated = normalized.length > MAX_CONTEXT_CHARS;
+        const contextText = truncated ? normalized.slice(0, MAX_CONTEXT_CHARS) : normalized;
+        contextCache = { url: parsedUrl.toString(), text: contextText };
+        const hostname = parsedUrl.hostname.replace(/^www\./, '');
+        const lengthLabel = contextText.length.toLocaleString();
+        const suffix = truncated ? ' (truncated)' : '';
+        setContextStatus(`Loaded ${lengthLabel} characters from ${hostname}${suffix}.`);
+      } catch (error) {
+        const msg = /Failed to fetch/i.test(error?.message || '')
+          ? 'Failed to load context: Network/CORS blocked the request.'
+          : `Failed to load context: ${error?.message || 'Unknown error.'}`;
+        setContextStatus(msg, true);
+        console.error('Context load failed:', error);
+      } finally {
+        setContextLoadingState(false);
+      }
+    }
 
     
 
@@ -721,6 +821,14 @@ async function initApp() {
             content: div.textContent
         }));
 
+        if (contextCache.text) {
+            const label = contextCache.url || 'the provided URL';
+            history.unshift({
+                role: 'system',
+                content: `Use the following context extracted from ${label}:\n\n${contextCache.text}`
+            });
+        }
+
         worker.postMessage({
             type: 'generate',
             data: history
@@ -740,6 +848,25 @@ async function initApp() {
     }
 
     // Event Listeners
+    if (contextLoadBtn) {
+        contextLoadBtn.addEventListener('click', () => {
+            if (!isContextLoading) {
+                loadContextFromUrl();
+            }
+        });
+    }
+
+    if (contextUrlInput) {
+        contextUrlInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                if (!isContextLoading) {
+                    loadContextFromUrl();
+                }
+            }
+        });
+    }
+
     sendBtn.addEventListener('click', sendMessage);
 
     // Support Option+Enter (Alt+Enter) to insert a newline, and Enter to send.

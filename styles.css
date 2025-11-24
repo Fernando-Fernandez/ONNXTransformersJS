@@ -63,6 +63,37 @@ h3 {
   gap: 1rem;
 }
 
+.context-loader {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 280px;
+  flex: 1 1 320px;
+}
+
+.context-loader-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.context-loader-row input {
+  flex: 1 1 auto;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--theme-border);
+  border-radius: 4px;
+}
+
+.context-status {
+  font-size: 0.85rem;
+  color: var(--color-gray-80);
+  min-height: 1.2rem;
+}
+
+.context-status.error {
+  color: #a12626;
+}
+
 /* Narrower status container so it fits beside the selector */
 #status-container {
   display: flex;
@@ -263,6 +294,16 @@ button:disabled {
   .top-row {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .context-loader-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .context-loader-row button,
+  .context-loader-row input {
+    width: 100%;
   }
 
   .chat-container,
