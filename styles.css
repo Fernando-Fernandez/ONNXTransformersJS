@@ -71,6 +71,34 @@ h3 {
   min-width: 220px;
 }
 
+.loaded-files-container {
+  margin-top: 0.5rem;
+  width: 100%;
+}
+
+.loaded-files-title {
+  font-size: 0.85rem;
+  color: var(--color-gray-80);
+  margin-bottom: 0.25rem;
+}
+
+.loaded-files {
+  list-style: none;
+  padding: 0.5rem;
+  margin: 0;
+  border: 1px solid var(--theme-border);
+  border-radius: 4px;
+  max-height: 140px;
+  overflow-y: auto;
+  font-size: 0.85rem;
+  width: 100%;
+  background: var(--theme-background);
+}
+
+.loaded-files li + li {
+  margin-top: 0.25rem;
+}
+
 /* Main Layout Container */
 /* Uses Flexbox to create a side-by-side layout for Thought Panel and Chat */
 .main-container {
@@ -159,6 +187,22 @@ h3 {
 .message.assistant {
   align-self: flex-start;
   border: 1px solid var(--theme-border);
+  border-radius: 6px;
+  padding: 1.1rem 1rem 1rem;
+  margin: 0;
+  position: relative;
+}
+
+.message.assistant legend {
+  font-size: xx-small;
+  font-weight: 600;
+  padding: 0 0.5rem;
+  margin-left: 0.5rem;
+  background: var(--theme-background);
+}
+
+.assistant-output {
+  margin-top: 0.25rem;
 }
 
 /* Styling for converted list items inside assistant messages */

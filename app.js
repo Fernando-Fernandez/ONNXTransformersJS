@@ -474,6 +474,7 @@ async function initApp() {
     const resetBtn = document.getElementById('reset-btn');
     const tpsStatus = document.getElementById('tps-status');
     const tpsValue = document.getElementById('tps-value');
+    const loadedFilesList = document.getElementById('loaded-files');
 
     // Thought Panel Elements
     const thoughtPanel = document.getElementById('thought-panel');
@@ -489,16 +490,32 @@ async function initApp() {
 
     let isGenerating = false;
     let currentAssistantMessageDiv = null;
+    let currentModelDisplayName = 'Assistant';
+    let currentModelId = null;
+
+    function friendlyModelName(id) {
+      if (!id) return 'Assistant';
+      return (MODEL_REGISTRY[id] && MODEL_REGISTRY[id].friendly) || id;
+    }
+
+    function clearLoadedFiles() {
+      if (loadedFilesList) {
+        loadedFilesList.innerHTML = '';
+      }
+    }
+
+    function appendLoadedFile(fileLabel) {
+      if (!loadedFilesList || !fileLabel) return;
+      const li = document.createElement('li');
+      li.textContent = fileLabel;
+      loadedFilesList.appendChild(li);
+    }
 
     // Worker Message Handling
     worker.addEventListener('message', (e) => {
       const { status, data, progress, file, output, thought, tps, model } = e.data;
 
       const currentModelNameEl = document.getElementById('current-model-name');
-
-      function friendlyName(id) {
-        return (MODEL_REGISTRY[id] && MODEL_REGISTRY[id].friendly) || id;
-      }
 
         switch (status) {
             case 'loading':
@@ -517,6 +534,7 @@ async function initApp() {
                 // File download complete
                 progressFill.style.width = '100%';
                 progressText.textContent = '100%';
+                if (file) appendLoadedFile(file);
                 setTimeout(() => {
                     modelStatus.classList.add('hidden');
                 }, 1000);
@@ -525,13 +543,17 @@ async function initApp() {
               case 'model_changed':
                 // Worker acknowledged model switch
                 if (data) {
-                  const friendly = friendlyName(data);
+                  const modelId = typeof data === 'string' ? data : data?.model_id;
+                  if (modelId) currentModelId = modelId;
+                  const friendly = friendlyModelName(modelId || currentModelId);
+                  currentModelDisplayName = friendly;
                   if (currentModelNameEl) currentModelNameEl.textContent = `${friendly} (switching...)`;
                   // show loader UI
                   modelStatus.classList.remove('hidden');
                   loadingFile.textContent = friendly;
                   progressFill.style.width = `0%`;
                   progressText.textContent = `0%`;
+                  clearLoadedFiles();
                 }
                 break;
 
@@ -540,7 +562,11 @@ async function initApp() {
               modelStatus.classList.add('hidden');
               chatInterface.classList.remove('hidden');
               console.log('Model ready');
-              if (model && currentModelNameEl) currentModelNameEl.textContent = friendlyName(model);
+              if (model) {
+                currentModelId = model;
+                currentModelDisplayName = friendlyModelName(model);
+              }
+              if (currentModelNameEl) currentModelNameEl.textContent = friendlyModelName(model || currentModelId);
               break;
 
             case 'start':
@@ -603,9 +629,12 @@ async function initApp() {
     function setModelAndLoad(modelId) {
       // Clear progress UI and notify worker to switch model
       modelStatus.classList.remove('hidden');
-      loadingFile.textContent = 'Selected model: ' + (MODEL_REGISTRY[modelId]?.friendly || modelId);
+      currentModelId = modelId;
+      currentModelDisplayName = friendlyModelName(modelId);
+      loadingFile.textContent = 'Selected model: ' + currentModelDisplayName;
       progressFill.style.width = `0%`;
       progressText.textContent = `0%`;
+      clearLoadedFiles();
 
       // Previously could request CPU fallback; that option was removed.
 
@@ -641,18 +670,38 @@ async function initApp() {
 
     // UI Helpers
     function appendMessage(role, content) {
-        const div = document.createElement('div');
-        div.className = `message ${role}`;
-      if (role === 'assistant') {
-        div.innerHTML = renderFormatted(content);
-      } else {
-        div.textContent = content;
-      }
-        messagesContainer.appendChild(div);
+        let node;
+        if (role === 'assistant') {
+          const fieldset = document.createElement('fieldset');
+          fieldset.className = 'message assistant';
+
+          const legend = document.createElement('legend');
+          legend.textContent = currentModelDisplayName || 'Assistant';
+          fieldset.appendChild(legend);
+
+          const body = document.createElement('div');
+          body.className = 'assistant-output';
+          body.innerHTML = renderFormatted(content);
+          fieldset.appendChild(body);
+
+          node = fieldset;
+          currentAssistantMessageDiv = body;
+        } else {
+          const div = document.createElement('div');
+          div.className = `message ${role}`;
+          div.textContent = content;
+          node = div;
+        }
+
+        if (node && node.dataset) {
+          node.dataset.rawContent = content;
+        }
+
+        messagesContainer.appendChild(node);
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
 
-        if (role === 'assistant') {
-            currentAssistantMessageDiv = div;
+        if (role !== 'assistant') {
+            currentAssistantMessageDiv = null;
         }
     }
 
@@ -660,6 +709,10 @@ async function initApp() {
         if (currentAssistantMessageDiv) {
             currentAssistantMessageDiv.innerHTML = renderFormatted(content);
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            const fieldset = currentAssistantMessageDiv.closest('.message.assistant');
+            if (fieldset && fieldset.dataset) {
+              fieldset.dataset.rawContent = content;
+            }
         }
     }
 
@@ -716,7 +769,7 @@ async function initApp() {
         // Construct conversation history (simplified for this demo)
         const history = Array.from(messagesContainer.children).map(div => ({
             role: div.classList.contains('user') ? 'user' : 'assistant',
-            content: div.textContent
+            content: div.dataset?.rawContent ?? div.textContent
         }));
 
         worker.postMessage({
