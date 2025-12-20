@@ -498,6 +498,7 @@ async function initApp() {
     let currentModelId = null;
     let lastLoadedModelId = null;
     let modelLoadInProgress = false;
+    let buttonInitiatedLoad = false;
 
     function friendlyModelName(id) {
       if (!id) return 'Assistant';
@@ -548,7 +549,12 @@ async function initApp() {
       if (!selectedModel) return;
       modelLoadInProgress = true;
       updateLoadButtonLabel();
-      setModelAndLoad(selectedModel);
+      buttonInitiatedLoad = true;
+      try {
+        setModelAndLoad(selectedModel);
+      } finally {
+        buttonInitiatedLoad = false;
+      }
     }
 
     // Worker Message Handling
@@ -689,6 +695,10 @@ async function initApp() {
     updateLoadButtonLabel();
 
     function setModelAndLoad(modelId) {
+      if (!buttonInitiatedLoad) {
+        console.warn('Model load ignored: must be triggered via the Load button.');
+        return;
+      }
       // Clear progress UI and notify worker to switch model
       modelStatus.classList.remove('hidden');
       currentModelId = modelId;
