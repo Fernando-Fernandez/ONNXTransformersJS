@@ -271,6 +271,51 @@ button:disabled {
   display: none !important;
 }
 
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: var(--theme-background);
+  border-radius: 8px;
+  border: 1px solid var(--theme-border);
+  max-width: 420px;
+  width: 100%;
+  padding: 1.5rem;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+}
+
+.modal-content h2 {
+  margin-bottom: 0.75rem;
+}
+
+.modal-content p + p {
+  margin-top: 0.5rem;
+}
+
+.modal-actions {
+  margin-top: 1.5rem;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.secondary-btn {
+  background: transparent;
+  border: 1px solid var(--theme-border);
+}
+
+.secondary-btn:hover {
+  opacity: 0.9;
+}
+
 /* Progress Bar Styles */
 .progress-bar {
   width: 100%;

@@ -18,6 +18,9 @@
                 <!-- options populated dynamically from MODEL_REGISTRY -->
             </select>
         </div>
+        <div class="model-actions">
+            <button id="load-model-btn">Load Selected Model</button>
+        </div>
 
         <div id="current-model" style="margin-top:0.5rem;font-size:0.95rem;color:#333;">Loaded model: <span id="current-model-name">None</span></div>
 
@@ -78,6 +81,18 @@
             <div class="status-bar">
                 <button id="reset-btn">Reset Chat</button>
                 <button id="toggle-thought-btn">Show Thoughts</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="load-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="load-modal-title">
+        <div class="modal-content">
+            <h2 id="load-modal-title">Load the selected LLM?</h2>
+            <p>You're about to download and initialize a large language model directly in your browser.</p>
+            <p>This can take a few minutes while files download and shaders compile, especially on slower connections.</p>
+            <div class="modal-actions">
+                <button id="cancel-load-btn" class="secondary-btn">Cancel</button>
+                <button id="confirm-load-btn">Start Loading</button>
             </div>
         </div>
     </div>

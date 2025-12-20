@@ -475,6 +475,10 @@ async function initApp() {
     const tpsStatus = document.getElementById('tps-status');
     const tpsValue = document.getElementById('tps-value');
     const loadedFilesList = document.getElementById('loaded-files');
+    const loadModelBtn = document.getElementById('load-model-btn');
+    const loadModal = document.getElementById('load-modal');
+    const confirmLoadBtn = document.getElementById('confirm-load-btn');
+    const cancelLoadBtn = document.getElementById('cancel-load-btn');
 
     // Thought Panel Elements
     const thoughtPanel = document.getElementById('thought-panel');
@@ -492,6 +496,8 @@ async function initApp() {
     let currentAssistantMessageDiv = null;
     let currentModelDisplayName = 'Assistant';
     let currentModelId = null;
+    let lastLoadedModelId = null;
+    let modelLoadInProgress = false;
 
     function friendlyModelName(id) {
       if (!id) return 'Assistant';
@@ -511,6 +517,40 @@ async function initApp() {
       loadedFilesList.appendChild(li);
     }
 
+    function updateLoadButtonLabel(prefixOverride) {
+      if (!loadModelBtn) return;
+      if (modelLoadInProgress) {
+        loadModelBtn.textContent = 'Loading...';
+        loadModelBtn.disabled = true;
+        return;
+      }
+      const selected = modelSelect?.value;
+      const friendly = selected ? friendlyModelName(selected) : 'Selected Model';
+      const hasLoadedSelected = Boolean(selected && lastLoadedModelId && selected === lastLoadedModelId);
+      const prefix = prefixOverride || (hasLoadedSelected ? 'Reload' : 'Load');
+      loadModelBtn.textContent = `${prefix} ${friendly}`;
+      loadModelBtn.disabled = false;
+    }
+
+    function openLoadModal() {
+      if (!loadModal) return;
+      loadModal.classList.remove('hidden');
+    }
+
+    function closeLoadModal() {
+      if (!loadModal) return;
+      loadModal.classList.add('hidden');
+    }
+
+    function startModelLoad() {
+      if (!modelSelect || modelLoadInProgress) return;
+      const selectedModel = modelSelect.value;
+      if (!selectedModel) return;
+      modelLoadInProgress = true;
+      updateLoadButtonLabel();
+      setModelAndLoad(selectedModel);
+    }
+
     // Worker Message Handling
     worker.addEventListener('message', (e) => {
       const { status, data, progress, file, output, thought, tps, model } = e.data;
@@ -522,6 +562,8 @@ async function initApp() {
             case 'initiate':
             case 'progress':
                 // Show loading status and progress bar
+                modelLoadInProgress = true;
+                updateLoadButtonLabel();
                 modelStatus.classList.remove('hidden');
                 if (file) loadingFile.textContent = file;
                 if (progress) {
@@ -545,6 +587,8 @@ async function initApp() {
                 if (data) {
                   const modelId = typeof data === 'string' ? data : data?.model_id;
                   if (modelId) currentModelId = modelId;
+                  modelLoadInProgress = true;
+                  updateLoadButtonLabel();
                   const friendly = friendlyModelName(modelId || currentModelId);
                   currentModelDisplayName = friendly;
                   if (currentModelNameEl) currentModelNameEl.textContent = `${friendly} (switching...)`;
@@ -564,9 +608,14 @@ async function initApp() {
               console.log('Model ready');
               if (model) {
                 currentModelId = model;
-                currentModelDisplayName = friendlyModelName(model);
               }
-              if (currentModelNameEl) currentModelNameEl.textContent = friendlyModelName(model || currentModelId);
+              lastLoadedModelId = model || currentModelId;
+              if (lastLoadedModelId) {
+                currentModelDisplayName = friendlyModelName(lastLoadedModelId);
+              }
+              if (currentModelNameEl) currentModelNameEl.textContent = friendlyModelName(lastLoadedModelId || currentModelId);
+              modelLoadInProgress = false;
+              updateLoadButtonLabel();
               break;
 
             case 'start':
@@ -603,6 +652,18 @@ async function initApp() {
                 currentAssistantMessageDiv = null;
                 updateButtons();
                 break;
+
+            case 'error':
+                console.error('Worker error:', data);
+                if (modelLoadInProgress) {
+                    modelStatus.classList.add('hidden');
+                    modelLoadInProgress = false;
+                    updateLoadButtonLabel('Retry');
+                    if (currentModelNameEl) {
+                        currentModelNameEl.textContent = 'Load failed';
+                    }
+                }
+                break;
         }
     });
 
@@ -625,6 +686,7 @@ async function initApp() {
     } catch (e) {
       console.warn('Model registry not available to populate dropdown:', e);
     }
+    updateLoadButtonLabel();
 
     function setModelAndLoad(modelId) {
       // Clear progress UI and notify worker to switch model
@@ -658,15 +720,47 @@ async function initApp() {
       }
     }
 
-    modelSelect.addEventListener('change', (e) => {
-      const val = e.target.value;
-      setModelAndLoad(val);
+    modelSelect.addEventListener('change', () => {
+      if (!modelLoadInProgress) {
+        updateLoadButtonLabel();
+      }
     });
 
     // Force CPU option removed; no handler required.
 
-    // Initialize Model with currently selected model
-    setModelAndLoad(document.getElementById('model-select').value);
+    if (loadModelBtn) {
+      loadModelBtn.addEventListener('click', () => {
+        if (modelLoadInProgress) return;
+        openLoadModal();
+      });
+    }
+
+    if (confirmLoadBtn) {
+      confirmLoadBtn.addEventListener('click', () => {
+        closeLoadModal();
+        startModelLoad();
+      });
+    }
+
+    if (cancelLoadBtn) {
+      cancelLoadBtn.addEventListener('click', () => {
+        closeLoadModal();
+      });
+    }
+
+    if (loadModal) {
+      loadModal.addEventListener('click', (event) => {
+        if (event.target === loadModal) {
+          closeLoadModal();
+        }
+      });
+    }
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && loadModal && !loadModal.classList.contains('hidden')) {
+        closeLoadModal();
+      }
+    });
 
     // UI Helpers
     function appendMessage(role, content) {
