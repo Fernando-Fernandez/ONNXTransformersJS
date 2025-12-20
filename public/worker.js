@@ -263,7 +263,7 @@ function handleProgress(event) {
   console.log('Progress event:', event);
   if (!event.total) return;
 
-  const friendlyName = "Qwen3-0.6B-ONNX";
+  const friendlyName = TextGenerationPipeline?.model_id || "onnx-community/Qwen3-0.6B-ONNX";
   const fileLabel = event.url || friendlyName;
 
   if (event.loaded === 0) {
@@ -312,7 +312,8 @@ async function load() {
     }
 
     // If we get here, WebGPU is supported, so proceed with loading the model
-    self.postMessage({ status: "loading", data: "Loading Qwen3-0.6B-ONNX..." });
+    const modelId = TextGenerationPipeline?.model_id || "onnx-community/Qwen3-0.6B-ONNX";
+    self.postMessage({ status: "loading", data: `Loading ${modelId}...` });
 
     const [tokenizer, model] = await TextGenerationPipeline.getInstance(handleProgress);
     console.log('Model loaded successfully');
@@ -322,7 +323,7 @@ async function load() {
     console.log('Warmup inputs:', inputs);
     await model.generate({ ...inputs, max_new_tokens: 1 });
     console.log('Warmup complete');
-    self.postMessage({ status: "ready" });
+    self.postMessage({ status: "ready", model: modelId });
   } catch (error) {
     console.error('Model load failed:', error);
     const errorMessage = error?.message || error?.toString() || `Unknown error (${typeof error}): ${JSON.stringify(error)}`;
@@ -331,6 +332,22 @@ async function load() {
       data: `Model load failed: ${errorMessage}`
     });
   }
+}
+
+async function unloadModel() {
+  console.log('Unloading model resources');
+  try {
+    if (TextGenerationPipeline?.model && typeof TextGenerationPipeline.model.dispose === 'function') {
+      TextGenerationPipeline.model.dispose();
+    }
+  } catch (disposeError) {
+    console.warn('Model dispose failed:', disposeError);
+  }
+  TextGenerationPipeline.model = null;
+  TextGenerationPipeline.tokenizer = null;
+  TextGenerationPipeline._cpuFallbackTried = false;
+  past_key_values_cache = null;
+  stopping_criteria.reset();
 }
 
 /*
@@ -380,6 +397,13 @@ self.addEventListener("message", async (e) => {
       console.log('Resetting state');
       past_key_values_cache = null;
       stopping_criteria.reset();
+      break;
+    case "unload":
+      console.log('Received unload request');
+      stopping_criteria.interrupt();
+      self.postMessage({ status: "unloading" });
+      await unloadModel();
+      self.postMessage({ status: "unloaded" });
       break;
   }
 });
