@@ -391,6 +391,22 @@ async function load() {
   }
 }
 
+async function unloadModel() {
+  console.log('Unloading model resources');
+  try {
+    if (TextGenerationPipeline?.model && typeof TextGenerationPipeline.model.dispose === 'function') {
+      TextGenerationPipeline.model.dispose();
+    }
+  } catch (disposeError) {
+    console.warn('Model dispose failed:', disposeError);
+  }
+  TextGenerationPipeline.model = null;
+  TextGenerationPipeline.tokenizer = null;
+  TextGenerationPipeline._cpuFallbackTried = false;
+  past_key_values_cache = null;
+  stopping_criteria.reset();
+}
+
 // Worker message listener
 self.addEventListener("message", async (e) => {
   const { type, data } = e.data;
@@ -437,6 +453,13 @@ self.addEventListener("message", async (e) => {
       past_key_values_cache = null;
       stopping_criteria.reset();
       break;
+    case "unload":
+      console.log('Received unload request');
+      stopping_criteria.interrupt();
+      self.postMessage({ status: "unloading" });
+      await unloadModel();
+      self.postMessage({ status: "unloaded" });
+      break;
   }
 });
 `;
@@ -476,6 +499,7 @@ async function initApp() {
     const tpsValue = document.getElementById('tps-value');
     const loadedFilesList = document.getElementById('loaded-files');
     const loadModelBtn = document.getElementById('load-model-btn');
+    const unloadModelBtn = document.getElementById('unload-model-btn');
     const loadModal = document.getElementById('load-modal');
     const confirmLoadBtn = document.getElementById('confirm-load-btn');
     const cancelLoadBtn = document.getElementById('cancel-load-btn');
@@ -498,6 +522,7 @@ async function initApp() {
     let currentModelId = null;
     let lastLoadedModelId = null;
     let modelLoadInProgress = false;
+    let modelUnloadInProgress = false;
     let buttonInitiatedLoad = false;
 
     function friendlyModelName(id) {
@@ -525,12 +550,35 @@ async function initApp() {
         loadModelBtn.disabled = true;
         return;
       }
+      if (modelUnloadInProgress) {
+        loadModelBtn.textContent = 'Please wait...';
+        loadModelBtn.disabled = true;
+        return;
+      }
       const selected = modelSelect?.value;
       const friendly = selected ? friendlyModelName(selected) : 'Selected Model';
       const hasLoadedSelected = Boolean(selected && lastLoadedModelId && selected === lastLoadedModelId);
       const prefix = prefixOverride || (hasLoadedSelected ? 'Reload' : 'Load');
       loadModelBtn.textContent = `${prefix} ${friendly}`;
       loadModelBtn.disabled = false;
+    }
+
+    function updateUnloadButtonLabel(prefixOverride) {
+      if (!unloadModelBtn) return;
+      if (!lastLoadedModelId) {
+        unloadModelBtn.textContent = 'Unload Model';
+        unloadModelBtn.disabled = true;
+        return;
+      }
+      if (modelLoadInProgress || modelUnloadInProgress) {
+        unloadModelBtn.textContent = modelUnloadInProgress ? 'Unloading...' : 'Unload Model';
+        unloadModelBtn.disabled = true;
+        return;
+      }
+      const friendly = friendlyModelName(lastLoadedModelId);
+      const prefix = prefixOverride || 'Unload';
+      unloadModelBtn.textContent = `${prefix} ${friendly}`;
+      unloadModelBtn.disabled = false;
     }
 
     function openLoadModal() {
@@ -544,11 +592,12 @@ async function initApp() {
     }
 
     function startModelLoad() {
-      if (!modelSelect || modelLoadInProgress) return;
+      if (!modelSelect || modelLoadInProgress || modelUnloadInProgress) return;
       const selectedModel = modelSelect.value;
       if (!selectedModel) return;
       modelLoadInProgress = true;
       updateLoadButtonLabel();
+      updateUnloadButtonLabel();
       buttonInitiatedLoad = true;
       try {
         setModelAndLoad(selectedModel);
@@ -570,6 +619,7 @@ async function initApp() {
                 // Show loading status and progress bar
                 modelLoadInProgress = true;
                 updateLoadButtonLabel();
+                updateUnloadButtonLabel();
                 modelStatus.classList.remove('hidden');
                 if (file) loadingFile.textContent = file;
                 if (progress) {
@@ -595,6 +645,9 @@ async function initApp() {
                   if (modelId) currentModelId = modelId;
                   modelLoadInProgress = true;
                   updateLoadButtonLabel();
+                  lastLoadedModelId = null;
+                  modelUnloadInProgress = false;
+                  updateUnloadButtonLabel();
                   const friendly = friendlyModelName(modelId || currentModelId);
                   currentModelDisplayName = friendly;
                   if (currentModelNameEl) currentModelNameEl.textContent = `${friendly} (switching...)`;
@@ -622,6 +675,7 @@ async function initApp() {
               if (currentModelNameEl) currentModelNameEl.textContent = friendlyModelName(lastLoadedModelId || currentModelId);
               modelLoadInProgress = false;
               updateLoadButtonLabel();
+              updateUnloadButtonLabel();
               break;
 
             case 'start':
@@ -659,15 +713,46 @@ async function initApp() {
                 updateButtons();
                 break;
 
+            case 'unloading':
+                modelUnloadInProgress = true;
+                modelLoadInProgress = false;
+                updateLoadButtonLabel();
+                updateUnloadButtonLabel();
+                modelStatus.classList.remove('hidden');
+                loadingFile.textContent = `Unloading ${currentModelDisplayName || 'model'}...`;
+                progressFill.style.width = '0%';
+                progressText.textContent = '0%';
+                break;
+
+            case 'unloaded':
+                modelUnloadInProgress = false;
+                modelLoadInProgress = false;
+                lastLoadedModelId = null;
+                currentModelId = null;
+                currentModelDisplayName = 'Assistant';
+                if (currentModelNameEl) currentModelNameEl.textContent = 'None';
+                modelStatus.classList.add('hidden');
+                chatInterface.classList.add('hidden');
+                tpsStatus.classList.add('hidden');
+                updateLoadButtonLabel();
+                updateUnloadButtonLabel();
+                break;
+
             case 'error':
                 console.error('Worker error:', data);
                 if (modelLoadInProgress) {
                     modelStatus.classList.add('hidden');
                     modelLoadInProgress = false;
+                    lastLoadedModelId = null;
                     updateLoadButtonLabel('Retry');
+                    updateUnloadButtonLabel();
                     if (currentModelNameEl) {
                         currentModelNameEl.textContent = 'Load failed';
                     }
+                } else if (modelUnloadInProgress) {
+                    modelUnloadInProgress = false;
+                    updateLoadButtonLabel();
+                    updateUnloadButtonLabel();
                 }
                 break;
         }
@@ -693,6 +778,7 @@ async function initApp() {
       console.warn('Model registry not available to populate dropdown:', e);
     }
     updateLoadButtonLabel();
+    updateUnloadButtonLabel();
 
     function setModelAndLoad(modelId) {
       if (!buttonInitiatedLoad) {
@@ -703,10 +789,12 @@ async function initApp() {
       modelStatus.classList.remove('hidden');
       currentModelId = modelId;
       currentModelDisplayName = friendlyModelName(modelId);
+      lastLoadedModelId = null;
       loadingFile.textContent = 'Selected model: ' + currentModelDisplayName;
       progressFill.style.width = `0%`;
       progressText.textContent = `0%`;
       clearLoadedFiles();
+      updateUnloadButtonLabel();
 
       // Previously could request CPU fallback; that option was removed.
 
@@ -740,8 +828,18 @@ async function initApp() {
 
     if (loadModelBtn) {
       loadModelBtn.addEventListener('click', () => {
-        if (modelLoadInProgress) return;
+        if (modelLoadInProgress || modelUnloadInProgress) return;
         openLoadModal();
+      });
+    }
+
+    if (unloadModelBtn) {
+      unloadModelBtn.addEventListener('click', () => {
+        if (!lastLoadedModelId || modelLoadInProgress || modelUnloadInProgress) return;
+        modelUnloadInProgress = true;
+        updateUnloadButtonLabel();
+        updateLoadButtonLabel();
+        worker.postMessage({ type: 'unload' });
       });
     }
 

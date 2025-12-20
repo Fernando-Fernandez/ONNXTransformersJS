@@ -63,6 +63,12 @@ h3 {
   gap: 1rem;
 }
 
+.model-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
 /* Narrower status container so it fits beside the selector */
 #status-container {
   display: flex;
